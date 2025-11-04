@@ -47,8 +47,7 @@ The notebook and app perform the following tasks:
 ```
 📦 Disease_Prediction
 ├── 🧮 Disease_Prediction_Using_Machine_Learning.ipynb
-├── 🧮 Improved_Disease_Prediction_Final.ipynb
-├── 📜 streamlit_app.py
+├── 📜 app.py
 ├── 📁 serve_artifacts/
 │   ├── ensemble_model.pkl
 │   ├── label_encoder.pkl
