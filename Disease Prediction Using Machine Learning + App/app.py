@@ -1,107 +1,85 @@
+# /app.py
 import streamlit as st
+import pandas as pd
 import joblib
+import os
+from sklearn.preprocessing import LabelEncoder
 
-# Load the trained model and label encoder
-MODEL_PATH = 'best_disease_model.pkl'
+st.set_page_config(page_title="Disease Predictor", layout="centered")
+
+ARTIFACT_DIR = "serve_artifacts"   # folder in repo containing model + label encoder (or change to path)
+MODEL_FNAME = "ensemble_model.pkl"
+LABEL_FNAME = "label_encoder.pkl"
+
+MODEL_PATH = os.path.join(ARTIFACT_DIR, MODEL_FNAME)
+LABEL_PATH = os.path.join(ARTIFACT_DIR, LABEL_FNAME)
+
+st.title("🩺 Disease Prediction Demo")
+
+# Load model & label encoder
+if not os.path.exists(MODEL_PATH):
+    st.error(f"Model not found at {MODEL_PATH}. Upload the model to this path or update MODEL_PATH.")
+    st.stop()
 model = joblib.load(MODEL_PATH)
 
-# For simplicity, re-fitting on the training data labels. In a real scenario,
-# the fitted label encoder should also be saved and loaded.
-TRAIN_PATH = 'Training.csv'
-df_train = pd.read_csv(TRAIN_PATH)
-TARGET = 'prognosis' if 'prognosis' in df_train.columns else df_train.columns[-1]
-le = LabelEncoder()
-le.fit(df_train[TARGET])
+label_encoder = None
+if os.path.exists(LABEL_PATH):
+    label_encoder = joblib.load(LABEL_PATH)
 
-st.title('Disease Prediction App')
-st.write('Enter the symptoms to predict the disease.')
+# Try to infer input columns from model or fallback to Training.csv
+# If you saved all_input_cols.json earlier, prefer that
+COLS_FNAME = os.path.join(ARTIFACT_DIR, "all_input_cols.json")
+if os.path.exists(COLS_FNAME):
+    import json
+    with open(COLS_FNAME, "r", encoding="utf-8") as f:
+        input_cols = json.load(f)
+else:
+    # fallback: require user upload of a sample CSV
+    st.info("No input column metadata found. Upload a sample CSV or ensure all_input_cols.json is saved under serve_artifacts.")
+    upload = st.file_uploader("Upload a sample CSV (with feature columns)", type=["csv"])
+    if upload is None:
+        st.stop()
+    sample = pd.read_csv(upload)
+    input_cols = sample.columns.tolist()
 
-# Get the list of symptoms (features) from the training data, excluding the target
-symptoms = df_train.drop(columns=[TARGET]).columns.tolist()
+st.sidebar.header("Input mode")
+mode = st.sidebar.selectbox("Mode", ["Single sample (form)", "Upload CSV"])
 
-# Create input fields for symptoms
-st.sidebar.header('Select Symptoms')
-input_data = {}
-for symptom in symptoms:
-    input_data[symptom] = st.sidebar.checkbox(symptom.replace('_', ' ').title(), value=False)
-
-# Convert input data to a DataFrame
-input_df = pd.DataFrame([input_data])
-
-# Make prediction when the button is clicked
-if st.button('Predict Disease'):
-    # Ensure the input columns match the training data columns
-    # This is crucial if the model expects a specific order/set of features
-    # For simplicity, assume the order is the same and all symptoms from training are present
-    # in the sidebar checkboxes. In a more robust app, handle missing features.
-
-    # The model pipeline includes preprocessing, so we feed the raw input_df
-    prediction_encoded = model.predict(input_df)
-    predicted_disease = le.inverse_transform(prediction_encoded)[0]
-    st.subheader('Predicted Disease:')
-    st.write(predicted_disease)
-
-st.title('Disease Prediction App')
-st.write('Select the symptoms you are experiencing from the list below and click "Predict Disease".')
-
-# Get the list of symptoms (features) from the training data, excluding the target
-symptoms = df_train.drop(columns=[TARGET]).columns.tolist()
-
-# Create input fields for symptoms
-st.sidebar.header('Select Symptoms')
-input_data = {}
-for symptom in symptoms:
-    # Format symptom names for readability
-    display_symptom = symptom.replace('_', ' ').title()
-    input_data[symptom] = st.sidebar.checkbox(display_symptom, value=False)
-
-# Convert input data to a DataFrame
-input_df = pd.DataFrame([input_data])
-
-# Add a button to trigger prediction
-if st.button('Predict Disease'):
-    # Make prediction when the button is clicked
-    # Ensure the input columns match the training data columns
-    # This is crucial if the model expects a specific order/set of features
-    # For simplicity, assume the order is the same and all symptoms from training are present
-    # in the sidebar checkboxes. In a more robust app, handle missing features.
-
-    # The model pipeline includes preprocessing, so we feed the raw input_df
-    prediction_encoded = model.predict(input_df)
-    predicted_disease = le.inverse_transform(prediction_encoded)[0]
-    st.subheader('Predicted Disease:')
-    st.write(predicted_disease)
-
-# Ensure the columns of the input DataFrame are in the same order as the training data
-training_columns = df_train.drop(columns=[TARGET]).columns
-input_df = pd.DataFrame([input_data])[training_columns]
-
-# Make prediction when the button is clicked
-if st.button('Predict Disease'):
-    # The model pipeline includes preprocessing, so we feed the raw input_df
-    prediction_encoded = model.predict(input_df)
-    predicted_disease = le.inverse_transform(prediction_encoded)[0]
-    st.subheader('Predicted Disease:')
-    st.write(predicted_disease)
-
-# Make prediction when the button is clicked
-if st.button('Predict Disease'):
-    # The model pipeline includes preprocessing, so we feed the raw input_df
-    prediction_encoded = model.predict(input_df)
-    predicted_disease = le.inverse_transform(prediction_encoded)[0]
-    st.subheader('Predicted Disease:')
-    st.write(predicted_disease)
-
-st.markdown("""
-## How to run this app
-
-1.  **Install Streamlit:** If you don't have Streamlit installed, open your terminal or command prompt and run:
-    ```bash
-    pip install streamlit
-    ```
-
-2.  **Run the app:** Navigate to the directory where you saved this `app.py` file in your terminal or command prompt and run:
-    ```bash
-    streamlit run app.py
-    ```
-""")
+if mode == "Upload CSV":
+    uploaded = st.file_uploader("Upload CSV for batch predictions", type=["csv"])
+    if uploaded:
+        df_in = pd.read_csv(uploaded)
+        # ensure same columns
+        for c in input_cols:
+            if c not in df_in.columns:
+                df_in[c] = 0
+        df_in = df_in[input_cols]
+        st.write("Preview:")
+        st.dataframe(df_in.head())
+        if st.button("Predict batch"):
+            preds = model.predict(df_in)
+            if label_encoder is not None:
+                preds = label_encoder.inverse_transform(preds)
+            out = df_in.copy()
+            out["prediction"] = preds
+            st.dataframe(out.head())
+            st.download_button("Download predictions (CSV)", out.to_csv(index=False), "preds.csv", "text/csv")
+else:
+    st.subheader("Enter features for a single sample")
+    with st.form("single_form"):
+        inputs = {}
+        for c in input_cols:
+            # assume binary/float numeric; adjust as needed
+            inputs[c] = st.number_input(c, value=0.0, step=1.0)
+        submitted = st.form_submit_button("Predict")
+    if submitted:
+        df_in = pd.DataFrame([inputs])[input_cols]
+        try:
+            pred = model.predict(df_in)
+            if label_encoder is not None:
+                pred_label = label_encoder.inverse_transform(pred)[0]
+            else:
+                pred_label = str(pred[0])
+            st.success(f"Predicted disease: {pred_label}")
+        except Exception as e:
+            st.error("Prediction failed: " + str(e))
